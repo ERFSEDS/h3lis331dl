@@ -5,6 +5,7 @@ use hal::blocking::delay::DelayMs;
 use hal::blocking::spi::{Transfer, Write};
 use hal::digital::v2::OutputPin;
 
+const DEFAULT_WHO_AM_I: u8 = 0x32;
 const WHO_AM_I: u8 = 0x0F;
 const CTRL_REG1: u8 = 0x20;
 const CTRL_REG2: u8 = 0x21;
@@ -100,7 +101,7 @@ enum trig_on_level {
 }
 
 // H3LIS331DL
-pub struct H3LIS331DL<SPI, NCS, E> 
+pub struct H3LIS331DL<SPI, NCS, E>
 where
     SPI: Transfer<u8, Error = E> + Write<u8, Error = E>,
     NCS: OutputPin<Error = E>,
@@ -109,36 +110,74 @@ where
     ncs: NCS,
 }
 
+// TODO: Use a custom error type similar to the error type used by the bmi160
+//
+// #[derive(Debug)]
+// pub enum Error<CommE, PinE> {
+//     /// I²C / SPI communication error
+//     Comm(CommE),
+//     /// Chip-select pin error (SPI)
+//     Pin(PinE),
+//     /// Invalid input data provided
+//     InvalidInputData,
+// }
+
 impl<SPI, NCS, E> H3LIS331DL<SPI, NCS, E>
 where
     SPI: Transfer<u8, Error = E> + Write<u8, Error = E>,
     NCS: OutputPin<Error = E>,
 {
     ///Creates a new H3LIS331DL driver from a SPI peripheral and a NCS pin
-    pub fn new(
-        spi: SPI,
-        ncs: NCS,
-    ) -> Result<H3LIS331DL<SPI, NCS, E>, E> {
+    pub fn new(spi: SPI, ncs: NCS) -> Result<H3LIS331DL<SPI, NCS, E>, E> {
         let mut h3lis331dl = H3LIS331DL { spi, ncs };
+
+        // FIXME: Remove unwrap once we have completed initial testing
+        let whoami = h3lis331dl
+            .readReg(WHO_AM_I)
+            .unwrap_or_else(|_| panic!("Failed to read whoami"));
+        if whoami != DEFAULT_WHO_AM_I {
+            panic!("Expected whoami {} but got {}", DEFAULT_WHO_AM_I, whoami);
+        }
+
+        // TODO: look into using boot mode on the device.
+        // See 7.3 CTRL_REG2 on the datasheet:
+        // https://www.st.com/resource/en/datasheet/h3lis331dl.pdf
+        let zero: [u8; 1] = [0];
+
+        let registers = [
+            CTRL_REG2,
+            CTRL_REG3,
+            CTRL_REG4,
+            CTRL_REG5,
+            INT1_CFG,
+            INT1_SOURCE,
+            INT1_THS,
+            INT1_DURATION,
+            INT2_CFG,
+            INT2_SOURCE,
+            INT2_THS,
+            INT2_DURATION,
+        ];
+
+        // Zero out above registers
+        for register in &registers {
+            h3lis331dl.H3LIS331DL_write(*register, &zero)?;
+        }
+
+        // Check to make sure the writes worked
+        for register in &registers {
+            let mut real_value: [u8; 1] = [0];
+            h3lis331dl.H3LIS331DL_read(*register, &mut real_value)?;
+            if real_value != zero {
+                panic!(
+                    "Failed to write to register {}. Expected 0, got {}",
+                    register, real_value[0]
+                );
+            }
+        }
 
         h3lis331dl.setPowerMode(power_mode::NORMAL)?;
         h3lis331dl.axisEnable(true)?;
-        let mut zero: [u8; 1] = [0];
-
-        let ranges = [0x21..0x25, 0x30..0x37];
-        for range in ranges {
-            for register in range.clone() {
-                h3lis331dl.H3LIS331DL_write(register, &mut zero)?;
-            }
-            for register in range {
-                let mut real_value: [u8; 1] = [0];
-                h3lis331dl.H3LIS331DL_write(register, &mut real_value)?;
-                if real_value != zero {
-                    todo!()
-                    //return Err(???);
-                }
-            }
-        }
 
         Ok(h3lis331dl)
     }
@@ -155,7 +194,10 @@ where
         //  affect the power mode bits.
         data[0] &= !0xe0; // Clear the top three bits
         data[0] |= (mode as u8) << 5; // set the top three bits to our pmode value
-        self.H3LIS331DL_write(CTRL_REG1, &mut data)// write the new value to CTRL_REG1
+                                      // TODO: Use Rust register abstractions to enable code like
+                                      // `self.ctrl_reg().pmode(PowerMode::Whatever)`
+                                      // That way we avoid manual bit manipulation
+        self.H3LIS331DL_write(CTRL_REG1, &mut data) // write the new value to CTRL_REG1
     }
 
     fn axisEnable(&mut self, enable: bool) -> Result<(), E> {
@@ -183,24 +225,21 @@ where
         self.H3LIS331DL_write(CTRL_REG1, &mut data) // write the new value to CTRL_REG1
     }
 
-    //make these mut
+    //FIXME
+    // Return struct of values instead of passing mutable references
     fn readAxes(&mut self, x: &mut i16, y: &mut i16, z: &mut i16) -> Result<(), E> {
         let mut data: [u8; 6] = [0, 0, 0, 0, 0, 0];
 
         // LIS331_read(OUT_X_L, &data[0], 1);
-        // FIXME: use seperate variables for each axis, and check bit math below
-        // Also look into iniating one read and haing the device send back mutiple registers of
+        // FIXME: use seperate variables for each axis, and check bit math below. The or looks
+        // wrong
+        // Also look into starting one read and having the device send back mutiple registers of
         // data based on straight register values
         self.H3LIS331DL_read(OUT_X_L, &mut data[0..1])?;
-        // LIS331_read(OUT_X_H, &data[1], 1);
         self.H3LIS331DL_read(OUT_X_H, &mut data[1..2])?;
-        // LIS331_read(OUT_Y_L, &data[2], 1);
         self.H3LIS331DL_read(OUT_Y_L, &mut data[2..3])?;
-        // LIS331_read(OUT_Y_H, &data[3], 1);
         self.H3LIS331DL_read(OUT_Y_H, &mut data[3..4])?;
-        // LIS331_read(OUT_Z_L, &data[4], 1);
         self.H3LIS331DL_read(OUT_Z_L, &mut data[4..5])?;
-        // LIS331_read(OUT_Z_H, &data[5], 1);
         self.H3LIS331DL_read(OUT_Z_H, &mut data[5..6])?;
         // The data that comes out is 12-bit data, left justified, so the lower
         //  four bits of the data are always zero. We need to right shift by four,
@@ -418,9 +457,9 @@ where
         self.write_byte(reg, threshold)
     }
 
-    fn H3LIS331DL_read(&mut self, reg_address: u8, data: &mut [u8])-> Result<(), E> {
+    fn H3LIS331DL_read(&mut self, reg_address: u8, data: &mut [u8]) -> Result<(), E> {
         // SPI read handling code
-        data[0] = reg_address | 0xC0;
+        data[0] = reg_address | 0xC0; //0b1100_0000
         self.ncs.set_low()?;
         self.spi.transfer(data)?;
         self.ncs.set_high()?;
@@ -436,7 +475,7 @@ where
     fn H3LIS331DL_write(&mut self, reg_address: u8, data: &[u8]) -> Result<(), E> {
         // SPI write handling code
         self.ncs.set_low()?;
-        self.spi.write(&[reg_address | 0x40])?;
+        self.spi.write(&[reg_address | 0x40])?; //0b0100_0000
         self.spi.write(&data)?;
         self.ncs.set_high()?;
         Ok(())
