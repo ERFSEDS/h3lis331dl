@@ -134,8 +134,9 @@ where
 
         // FIXME: Remove unwrap once we have completed initial testing
         h3lis331dl.cs_enable()?;
-        let whoami = h3lis331dl.read_reg(WHO_AM_I)?;
+        let whoami = h3lis331dl.read_reg(WHO_AM_I);
         h3lis331dl.cs_disable()?;
+        let whoami = whoami?;
 
         if whoami != DEFAULT_WHO_AM_I {
             return Err(Error::InvalidWhoAmI(whoami));
@@ -270,9 +271,9 @@ where
 
     fn read_reg(&mut self, register: Reg) -> Result<u8, Error<SpiE, CsE>> {
         // 0xC0 = 0b1000_0000
-        let mut data: [u8; 1] = [register.0 | 0b1000_0000];
+        let mut data: [u8; 2] = [register.0 | 0b1000_0000, 0];
         let b = self.spi.transfer(&mut data).map_err(|e| Error::SPI(e))?;
-        Ok(b[0])
+        Ok(b[1])
     }
 
     fn H3LIS331DL_read(
