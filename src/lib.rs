@@ -100,42 +100,39 @@ enum trig_on_level {
 }
 
 // H3LIS331DL
-pub struct H3LIS331DL<SPI, NCS, E>
+pub struct H3LIS331DL<SPI, NCS, SpiE, CsE>
 where
-    SPI: Transfer<u8, Error = E> + Write<u8, Error = E>,
-    NCS: OutputPin,
+    SPI: Transfer<u8, Error = SpiE> + Write<u8, Error = SpiE>,
+    NCS: OutputPin<Error = CsE>,
 {
     spi: SPI,
     ncs: NCS,
 }
 
-// TODO: Use a custom error type similar to the error type used by the bmi160
-//
-// #[derive(Debug)]
-// pub enum Error<CommE, PinE> {
-//     /// I²C / SPI communication error
-//     Comm(CommE),
-//     /// Chip-select pin error (SPI)
-//     Pin(PinE),
-//     /// Invalid input data provided
-//     InvalidInputData,
-// }
+pub enum Error<SpiE, CsE> {
+    /// SPI Communication error
+    SPI(SpiE),
+    /// Chip-select pin error (SPI)
+    CS(CsE),
+    ///
+    InvalidWhoAmI(u8),
+    RegisterTest,
+}
 
-impl<SPI, NCS, E> H3LIS331DL<SPI, NCS, E>
+impl<SPI, NCS, SpiE, CsE> H3LIS331DL<SPI, NCS, SpiE, CsE>
 where
-    SPI: Transfer<u8, Error = E> + Write<u8, Error = E>,
-    NCS: OutputPin,
+    SPI: Transfer<u8, Error = SpiE> + Write<u8, Error = SpiE>,
+    NCS: OutputPin<Error = CsE>,
 {
     ///Creates a new H3LIS331DL driver from a SPI peripheral and a NCS pin
-    pub fn new(spi: SPI, ncs: NCS) -> Result<H3LIS331DL<SPI, NCS, E>, E> {
+    pub fn new(spi: SPI, ncs: NCS) -> Result<H3LIS331DL<SPI, NCS, SpiE, CsE>, Error<SpiE, CsE>> {
         let mut h3lis331dl = H3LIS331DL { spi, ncs };
 
         // FIXME: Remove unwrap once we have completed initial testing
-        let whoami = h3lis331dl
-            .readReg(WHO_AM_I)
-            .unwrap_or_else(|_| panic!("Failed to read whoami"));
+        let whoami = h3lis331dl.readReg(WHO_AM_I)?;
+
         if whoami != DEFAULT_WHO_AM_I {
-            panic!("Expected whoami {} but got {}", DEFAULT_WHO_AM_I, whoami);
+            return Err(Error::InvalidWhoAmI(whoami));
         }
 
         // TODO: look into using boot mode on the device.
@@ -168,10 +165,7 @@ where
             let mut real_value: [u8; 1] = [0];
             h3lis331dl.H3LIS331DL_read(*register, &mut real_value)?;
             if real_value != zero {
-                panic!(
-                    "Failed to write to register {}. Expected 0, got {}",
-                    register, real_value[0]
-                );
+                return Err(Error::RegisterTest);
             }
         }
 
@@ -181,7 +175,7 @@ where
         Ok(h3lis331dl)
     }
 
-    fn setPowerMode(&mut self, mode: power_mode) -> Result<(), E> {
+    fn setPowerMode(&mut self, mode: power_mode) -> Result<(), Error<SpiE, CsE>> {
         // let mut data: u8;
         let mut data: [u8; 1] = [0];
         self.H3LIS331DL_read(CTRL_REG1, &mut data)?;
@@ -199,7 +193,7 @@ where
         self.H3LIS331DL_write(CTRL_REG1, &mut data) // write the new value to CTRL_REG1
     }
 
-    pub fn axisEnable(&mut self, enable: bool) -> Result<(), E> {
+    pub fn axisEnable(&mut self, enable: bool) -> Result<(), Error<SpiE, CsE>> {
         let mut data: [u8; 1] = [0];
         self.H3LIS331DL_read(CTRL_REG1, &mut data)?;
         if enable {
@@ -210,7 +204,7 @@ where
         self.H3LIS331DL_write(CTRL_REG1, &mut data)
     }
 
-    fn setODR(&mut self, drate: data_rate) -> Result<(), E> {
+    fn setODR(&mut self, drate: data_rate) -> Result<(), Error<SpiE, CsE>> {
         let mut data: [u8; 1] = [0];
         self.H3LIS331DL_read(CTRL_REG1, &mut data)?;
 
@@ -226,7 +220,12 @@ where
 
     //FIXME
     // Return struct of values instead of passing mutable references
-    pub fn readAxes(&mut self, x: &mut i16, y: &mut i16, z: &mut i16) -> Result<(), E> {
+    pub fn readAxes(
+        &mut self,
+        x: &mut i16,
+        y: &mut i16,
+        z: &mut i16,
+    ) -> Result<(), Error<SpiE, CsE>> {
         let mut data: [u8; 6] = [0, 0, 0, 0, 0, 0];
 
         // LIS331_read(OUT_X_L, &data[0], 1);
@@ -253,7 +252,7 @@ where
         Ok(())
     }
 
-    fn readReg(&mut self, reg_address: u8) -> Result<u8, E> {
+    fn readReg(&mut self, reg_address: u8) -> Result<u8, Error<SpiE, CsE>> {
         let mut data: [u8; 1] = [0];
         self.H3LIS331DL_read(reg_address, &mut data)?;
         Ok(data[0])
@@ -264,7 +263,10 @@ where
         result
     }
 
-    fn setHighPassCoeff(&mut self, hpcoeff: high_pass_cutoff_freq_cfg) -> Result<(), E> {
+    fn setHighPassCoeff(
+        &mut self,
+        hpcoeff: high_pass_cutoff_freq_cfg,
+    ) -> Result<(), Error<SpiE, CsE>> {
         // The HPF coeff depends on the output data rate. The cutoff frequency is
         //  is approximately fs/(6*HPc) where HPc is 8, 16, 32 or 64, corresponding
         //  to the various constants available for this parameter.
@@ -275,7 +277,7 @@ where
         self.H3LIS331DL_write(CTRL_REG2, &mut data)
     }
 
-    pub fn enableHPF(&mut self, enable: bool) -> Result<(), E> {
+    pub fn enableHPF(&mut self, enable: bool) -> Result<(), Error<SpiE, CsE>> {
         // Enable the high pass filter
         let mut data: [u8; 1] = [0];
         self.H3LIS331DL_read(CTRL_REG2, &mut data)?;
@@ -287,7 +289,7 @@ where
         self.H3LIS331DL_write(CTRL_REG2, &mut data)
     }
 
-    fn HPFOnIntPin(&mut self, enable: bool, pin: u8) -> Result<(), E> {
+    fn HPFOnIntPin(&mut self, enable: bool, pin: u8) -> Result<(), Error<SpiE, CsE>> {
         // Enable the hpf on signal to int pins
         let mut data: [u8; 1] = [0];
         self.H3LIS331DL_read(CTRL_REG2, &mut data)?;
@@ -309,7 +311,7 @@ where
         self.H3LIS331DL_write(CTRL_REG2, &mut data)
     }
 
-    fn intActiveHigh(&mut self, enable: bool) -> Result<(), E> {
+    fn intActiveHigh(&mut self, enable: bool) -> Result<(), Error<SpiE, CsE>> {
         // Are the int pins active high or active low?
         let mut data: [u8; 1] = [0];
         self.H3LIS331DL_read(CTRL_REG3, &mut data)?;
@@ -322,7 +324,7 @@ where
         self.H3LIS331DL_write(CTRL_REG3, &mut data)
     }
 
-    fn intPinMode(&mut self, _pinMode: pp_od) -> Result<(), E> {
+    fn intPinMode(&mut self, _pinMode: pp_od) -> Result<(), Error<SpiE, CsE>> {
         let mut data: [u8; 1] = [0];
         self.H3LIS331DL_read(CTRL_REG3, &mut data)?;
         // Setting bit 6 makes int pins open drain.
@@ -334,7 +336,7 @@ where
         self.H3LIS331DL_write(CTRL_REG3, &mut data)
     }
 
-    fn latchInterrupt(&mut self, enable: bool, intSource: u8) -> Result<(), E> {
+    fn latchInterrupt(&mut self, enable: bool, intSource: u8) -> Result<(), Error<SpiE, CsE>> {
         // Latch mode for interrupt. When enabled, you must read the INTx_SRC reg
         //  to clear the interrupt and make way for another.
         let mut data: [u8; 1] = [0];
@@ -358,7 +360,7 @@ where
         self.H3LIS331DL_write(CTRL_REG3, &mut data)
     }
 
-    fn intSrcConfig(&mut self, src: int_sig_src, pin: u8) -> Result<(), E> {
+    fn intSrcConfig(&mut self, src: int_sig_src, pin: u8) -> Result<(), Error<SpiE, CsE>> {
         let mut data: [u8; 1] = [0];
         self.H3LIS331DL_read(CTRL_REG3, &mut data)?;
         // Enable latching by setting the appropriate bit.
@@ -373,27 +375,27 @@ where
         self.H3LIS331DL_write(CTRL_REG3, &mut data)
     }
 
-    fn setFullScale(&mut self, range: fs_range) -> Result<(), E> {
+    fn setFullScale(&mut self, range: fs_range) -> Result<(), Error<SpiE, CsE>> {
         let mut data = self.read_byte(CTRL_REG4)?;
         data &= !0xcf;
         data |= (range as u8) << 4;
         self.write_byte(CTRL_REG4, data)
     }
 
-    fn newData_impl(&mut self) -> Result<u8, E> {
+    fn newData_impl(&mut self) -> Result<u8, Error<SpiE, CsE>> {
         self.read_byte(STATUS_REG)
     }
 
     //FIXME. Return opaue status struct that has methods for this so we only have to do one read
-    fn newXData(&mut self) -> Result<bool, E> {
+    fn newXData(&mut self) -> Result<bool, Error<SpiE, CsE>> {
         Ok(((self.newData_impl()? >> 0) & 1) == 1)
     }
 
-    fn newYData(&mut self) -> Result<bool, E> {
+    fn newYData(&mut self) -> Result<bool, Error<SpiE, CsE>> {
         Ok(((self.newData_impl()? >> 1) & 1) == 1)
     }
 
-    fn newZData(&mut self) -> Result<bool, E> {
+    fn newZData(&mut self) -> Result<bool, Error<SpiE, CsE>> {
         Ok(((self.newData_impl()? >> 2) & 1) == 1)
     }
 
@@ -404,7 +406,7 @@ where
         //FIXME: Use enum for this
         interrupt: u8,
         enable: bool,
-    ) -> Result<(), E> {
+    ) -> Result<(), Error<SpiE, CsE>> {
         let mut data: [u8; 1] = [0];
         let (mut reg, mut mask): (u8, u8);
         mask = 0;
@@ -413,7 +415,7 @@ where
         } else {
             reg = INT2_CFG;
         }
-        self.H3LIS331DL_read(reg, &mut data);
+        self.H3LIS331DL_read(reg, &mut data)?;
         if (trigLevel as u8) == (trig_on_level::TRIG_ON_HIGH as u8) {
             mask = 1 << 1;
         } else {
@@ -433,7 +435,7 @@ where
         self.H3LIS331DL_write(reg, &mut data)
     }
 
-    fn setIntDuration(&mut self, duration: u8, intSource: u8) -> Result<(), E> {
+    fn setIntDuration(&mut self, duration: u8, intSource: u8) -> Result<(), Error<SpiE, CsE>> {
         let mut data: [u8; 1] = [0];
         data[0] = duration;
         let reg = if intSource == 1 {
@@ -445,7 +447,7 @@ where
         self.H3LIS331DL_write(reg, &mut data)
     }
 
-    fn setIntThreshold(&mut self, threshold: u8, intSource: u8) -> Result<(), E> {
+    fn setIntThreshold(&mut self, threshold: u8, intSource: u8) -> Result<(), Error<SpiE, CsE>> {
         let mut data: [u8; 1] = [0];
         let reg = if intSource == 1 {
             //FIXME: Use enum for this
@@ -456,31 +458,37 @@ where
         self.write_byte(reg, threshold)
     }
 
-    fn H3LIS331DL_read(&mut self, reg_address: u8, data: &mut [u8]) -> Result<(), E> {
+    fn H3LIS331DL_read(
+        &mut self,
+        reg_address: u8,
+        data: &mut [u8],
+    ) -> Result<(), Error<SpiE, CsE>> {
         // SPI read handling code
         data[0] = reg_address | 0xC0; //0b1100_0000
-        let _ = self.ncs.set_low();
-        self.spi.transfer(data)?;
-        let _ = self.ncs.set_high();
+        self.ncs.set_low().map_err(|e| Error::CS(e))?;
+        self.spi.transfer(data).map_err(|e| Error::SPI(e))?;
+        self.ncs.set_high().map_err(|e| Error::CS(e))?;
         Ok(())
     }
 
-    fn read_byte(&mut self, reg_address: u8) -> Result<u8, E> {
+    fn read_byte(&mut self, reg_address: u8) -> Result<u8, Error<SpiE, CsE>> {
         let mut data: [u8; 1] = [0];
         self.H3LIS331DL_read(reg_address, &mut data)?;
         Ok(data[0])
     }
 
-    fn H3LIS331DL_write(&mut self, reg_address: u8, data: &[u8]) -> Result<(), E> {
+    fn H3LIS331DL_write(&mut self, reg_address: u8, data: &[u8]) -> Result<(), Error<SpiE, CsE>> {
         // SPI write handling code
-        let _ = self.ncs.set_low();
-        self.spi.write(&[reg_address | 0x40])?; //0b0100_0000
-        self.spi.write(&data)?;
-        let _ = self.ncs.set_high();
+        self.ncs.set_low().map_err(|e| Error::CS(e))?;
+        self.spi
+            .write(&[reg_address | 0x40])
+            .map_err(|e| Error::SPI(e))?; //0b0100_0000
+        self.spi.write(&data).map_err(|e| Error::SPI(e))?;
+        self.ncs.set_high().map_err(|e| Error::CS(e))?;
         Ok(())
     }
 
-    fn write_byte(&mut self, reg_address: u8, value: u8) -> Result<(), E> {
+    fn write_byte(&mut self, reg_address: u8, value: u8) -> Result<(), Error<SpiE, CsE>> {
         let data: [u8; 1] = [value];
         self.H3LIS331DL_write(reg_address, &data)
     }
