@@ -109,6 +109,7 @@ where
     ncs: NCS,
 }
 
+#[derive(Debug)]
 pub enum Error<SpiE, CsE> {
     /// SPI Communication error
     SPI(SpiE),
