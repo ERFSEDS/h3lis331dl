@@ -1,7 +1,6 @@
 #![cfg_attr(not(test), no_std)]
 extern crate embedded_hal as hal;
 
-use hal::blocking::delay::DelayMs;
 use hal::blocking::spi::{Transfer, Write};
 use hal::digital::v2::OutputPin;
 
@@ -104,7 +103,7 @@ enum trig_on_level {
 pub struct H3LIS331DL<SPI, NCS, E>
 where
     SPI: Transfer<u8, Error = E> + Write<u8, Error = E>,
-    NCS: OutputPin<Error = E>,
+    NCS: OutputPin,
 {
     spi: SPI,
     ncs: NCS,
@@ -125,7 +124,7 @@ where
 impl<SPI, NCS, E> H3LIS331DL<SPI, NCS, E>
 where
     SPI: Transfer<u8, Error = E> + Write<u8, Error = E>,
-    NCS: OutputPin<Error = E>,
+    NCS: OutputPin,
 {
     ///Creates a new H3LIS331DL driver from a SPI peripheral and a NCS pin
     pub fn new(spi: SPI, ncs: NCS) -> Result<H3LIS331DL<SPI, NCS, E>, E> {
@@ -460,9 +459,9 @@ where
     fn H3LIS331DL_read(&mut self, reg_address: u8, data: &mut [u8]) -> Result<(), E> {
         // SPI read handling code
         data[0] = reg_address | 0xC0; //0b1100_0000
-        self.ncs.set_low()?;
+        let _ = self.ncs.set_low();
         self.spi.transfer(data)?;
-        self.ncs.set_high()?;
+        let _ = self.ncs.set_high();
         Ok(())
     }
 
@@ -474,10 +473,10 @@ where
 
     fn H3LIS331DL_write(&mut self, reg_address: u8, data: &[u8]) -> Result<(), E> {
         // SPI write handling code
-        self.ncs.set_low()?;
+        let _ = self.ncs.set_low();
         self.spi.write(&[reg_address | 0x40])?; //0b0100_0000
         self.spi.write(&data)?;
-        self.ncs.set_high()?;
+        let _ = self.ncs.set_high();
         Ok(())
     }
 
