@@ -5,29 +5,32 @@ use hal::blocking::spi::{Transfer, Write};
 use hal::digital::v2::OutputPin;
 
 const DEFAULT_WHO_AM_I: u8 = 0x32;
-const WHO_AM_I: u8 = 0x0F;
-const CTRL_REG1: u8 = 0x20;
-const CTRL_REG2: u8 = 0x21;
-const CTRL_REG3: u8 = 0x22;
-const CTRL_REG4: u8 = 0x23;
-const CTRL_REG5: u8 = 0x24;
-const HP_FILTER_RESET: u8 = 0x25;
-const REFERENCE: u8 = 0x26;
-const STATUS_REG: u8 = 0x27;
-const OUT_X_L: u8 = 0x28;
-const OUT_X_H: u8 = 0x29;
-const OUT_Y_L: u8 = 0x2A;
-const OUT_Y_H: u8 = 0x2B;
-const OUT_Z_L: u8 = 0x2C;
-const OUT_Z_H: u8 = 0x2D;
-const INT1_CFG: u8 = 0x30;
-const INT1_SOURCE: u8 = 0x31;
-const INT1_THS: u8 = 0x32;
-const INT1_DURATION: u8 = 0x33;
-const INT2_CFG: u8 = 0x34;
-const INT2_SOURCE: u8 = 0x35;
-const INT2_THS: u8 = 0x36;
-const INT2_DURATION: u8 = 0x37;
+const WHO_AM_I: Reg = Reg(0x0F);
+const CTRL_REG1: Reg = Reg(0x20);
+const CTRL_REG2: Reg = Reg(0x21);
+const CTRL_REG3: Reg = Reg(0x22);
+const CTRL_REG4: Reg = Reg(0x23);
+const CTRL_REG5: Reg = Reg(0x24);
+const HP_FILTER_RESET: Reg = Reg(0x25);
+const REFERENCE: Reg = Reg(0x26);
+const STATUS_REG: Reg = Reg(0x27);
+const OUT_X_L: Reg = Reg(0x28);
+const OUT_X_H: Reg = Reg(0x29);
+const OUT_Y_L: Reg = Reg(0x2A);
+const OUT_Y_H: Reg = Reg(0x2B);
+const OUT_Z_L: Reg = Reg(0x2C);
+const OUT_Z_H: Reg = Reg(0x2D);
+const INT1_CFG: Reg = Reg(0x30);
+const INT1_SOURCE: Reg = Reg(0x31);
+const INT1_THS: Reg = Reg(0x32);
+const INT1_DURATION: Reg = Reg(0x33);
+const INT2_CFG: Reg = Reg(0x34);
+const INT2_SOURCE: Reg = Reg(0x35);
+const INT2_THS: Reg = Reg(0x36);
+const INT2_DURATION: Reg = Reg(0x37);
+
+#[derive(Debug, Copy, Clone)]
+struct Reg(u8);
 
 #[repr(u8)]
 enum comm_mode {
@@ -130,10 +133,14 @@ where
         let mut h3lis331dl = H3LIS331DL { spi, ncs };
 
         // FIXME: Remove unwrap once we have completed initial testing
-        let whoami = h3lis331dl.readReg(WHO_AM_I)?;
+        h3lis331dl.cs_enable()?;
+        let whoami = h3lis331dl.read_reg(WHO_AM_I)?;
+        h3lis331dl.cs_disable()?;
 
         if whoami != DEFAULT_WHO_AM_I {
             return Err(Error::InvalidWhoAmI(whoami));
+        } else {
+            return Err(Error::RegisterTest);
         }
 
         // TODO: look into using boot mode on the device.
@@ -253,10 +260,32 @@ where
         Ok(())
     }
 
-    fn readReg(&mut self, reg_address: u8) -> Result<u8, Error<SpiE, CsE>> {
-        let mut data: [u8; 1] = [0];
-        self.H3LIS331DL_read(reg_address, &mut data)?;
-        Ok(data[0])
+    fn cs_enable(&mut self) -> Result<(), Error<SpiE, CsE>> {
+        self.ncs.set_low().map_err(|e| Error::CS(e))
+    }
+
+    fn cs_disable(&mut self) -> Result<(), Error<SpiE, CsE>> {
+        self.ncs.set_high().map_err(|e| Error::CS(e))
+    }
+
+    fn read_reg(&mut self, register: Reg) -> Result<u8, Error<SpiE, CsE>> {
+        // 0xC0 = 0b1000_0000
+        let mut data: [u8; 2] = [register.0 | 0b1000_0000, 0];
+        let b = self.spi.transfer(&mut data).map_err(|e| Error::SPI(e))?;
+        Ok(b[0])
+    }
+
+    fn H3LIS331DL_read(
+        &mut self,
+        reg_address: Reg,
+        data: &mut [u8],
+    ) -> Result<(), Error<SpiE, CsE>> {
+        // SPI read handling code
+        data[0] = reg_address.0 | 0xC0; //0b1100_0000
+        self.ncs.set_low().map_err(|e| Error::CS(e))?;
+        self.spi.transfer(data).map_err(|e| Error::SPI(e))?;
+        self.ncs.set_high().map_err(|e| Error::CS(e))?;
+        Ok(())
     }
 
     fn convertToG(&mut self, maxScale: i32, reading: i32) -> f32 {
@@ -409,7 +438,7 @@ where
         enable: bool,
     ) -> Result<(), Error<SpiE, CsE>> {
         let mut data: [u8; 1] = [0];
-        let (mut reg, mut mask): (u8, u8);
+        let (mut reg, mut mask): (Reg, u8);
         mask = 0;
         if interrupt == 1 {
             reg = INT1_CFG;
@@ -459,37 +488,24 @@ where
         self.write_byte(reg, threshold)
     }
 
-    fn H3LIS331DL_read(
-        &mut self,
-        reg_address: u8,
-        data: &mut [u8],
-    ) -> Result<(), Error<SpiE, CsE>> {
-        // SPI read handling code
-        data[0] = reg_address | 0xC0; //0b1100_0000
-        self.ncs.set_low().map_err(|e| Error::CS(e))?;
-        self.spi.transfer(data).map_err(|e| Error::SPI(e))?;
-        self.ncs.set_high().map_err(|e| Error::CS(e))?;
-        Ok(())
-    }
-
-    fn read_byte(&mut self, reg_address: u8) -> Result<u8, Error<SpiE, CsE>> {
+    fn read_byte(&mut self, reg_address: Reg) -> Result<u8, Error<SpiE, CsE>> {
         let mut data: [u8; 1] = [0];
         self.H3LIS331DL_read(reg_address, &mut data)?;
         Ok(data[0])
     }
 
-    fn H3LIS331DL_write(&mut self, reg_address: u8, data: &[u8]) -> Result<(), Error<SpiE, CsE>> {
+    fn H3LIS331DL_write(&mut self, reg_address: Reg, data: &[u8]) -> Result<(), Error<SpiE, CsE>> {
         // SPI write handling code
         self.ncs.set_low().map_err(|e| Error::CS(e))?;
         self.spi
-            .write(&[reg_address | 0x40])
+            .write(&[reg_address.0 | 0x40])
             .map_err(|e| Error::SPI(e))?; //0b0100_0000
         self.spi.write(&data).map_err(|e| Error::SPI(e))?;
         self.ncs.set_high().map_err(|e| Error::CS(e))?;
         Ok(())
     }
 
-    fn write_byte(&mut self, reg_address: u8, value: u8) -> Result<(), Error<SpiE, CsE>> {
+    fn write_byte(&mut self, reg_address: Reg, value: u8) -> Result<(), Error<SpiE, CsE>> {
         let data: [u8; 1] = [value];
         self.H3LIS331DL_write(reg_address, &data)
     }
