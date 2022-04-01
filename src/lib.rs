@@ -181,7 +181,7 @@ where
         Ok(h3lis331dl)
     }
 
-    pub fn setPowerMode(&mut self, mode: power_mode) -> Result<(), E> {
+    fn setPowerMode(&mut self, mode: power_mode) -> Result<(), E> {
         // let mut data: u8;
         let mut data: [u8; 1] = [0];
         self.H3LIS331DL_read(CTRL_REG1, &mut data)?;
@@ -210,7 +210,7 @@ where
         self.H3LIS331DL_write(CTRL_REG1, &mut data)
     }
 
-    pub fn setODR(&mut self, drate: data_rate) -> Result<(), E> {
+    fn setODR(&mut self, drate: data_rate) -> Result<(), E> {
         let mut data: [u8; 1] = [0];
         self.H3LIS331DL_read(CTRL_REG1, &mut data)?;
 
@@ -264,7 +264,7 @@ where
         result
     }
 
-    pub fn setHighPassCoeff(&mut self, hpcoeff: high_pass_cutoff_freq_cfg) -> Result<(), E> {
+    fn setHighPassCoeff(&mut self, hpcoeff: high_pass_cutoff_freq_cfg) -> Result<(), E> {
         // The HPF coeff depends on the output data rate. The cutoff frequency is
         //  is approximately fs/(6*HPc) where HPc is 8, 16, 32 or 64, corresponding
         //  to the various constants available for this parameter.
