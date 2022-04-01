@@ -271,7 +271,7 @@ where
 
     fn read_reg(&mut self, register: Reg) -> Result<u8, Error<SpiE, CsE>> {
         // 0xC0 = 0b1000_0000
-        let mut data: [u8; 2] = [register.0 | 0b1000_0000, 0];
+        let mut data: [u8; 2] = [register.0, 0];
         let b = self.spi.transfer(&mut data).map_err(|e| Error::SPI(e))?;
         Ok(b[1])
     }
